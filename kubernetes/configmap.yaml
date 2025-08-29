@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-incident-response-config
+  namespace: ai-incident-response
+data:
+  # Database Configuration
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "incident_response"
+  CLICKHOUSE_HOST: "clickhouse-service"
+  CLICKHOUSE_PORT: "8123"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  
+  # Message Queue Configuration
+  NATS_URL: "nats://nats-service:4222"
+  
+  # Storage Configuration
+  MINIO_ENDPOINT: "minio-service:9000"
+  MINIO_BUCKET: "incident-artifacts"
+  
+  # Application Configuration
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  
+  # Security Configuration
+  ENCRYPTION_ALGORITHM: "AES-256-CBC"
+  HASH_ALGORITHM: "SHA-256"
+  
+  # Monitoring Configuration
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger-collector:14268/api/traces"
+  PROMETHEUS_ENDPOINT: "http://prometheus:9090"
+  
+  # Feature Flags
+  ENABLE_AUDIT_LOGGING: "true"
+  ENABLE_ENCRYPTION: "true"
+  ENABLE_LEGAL_HOLD: "true"
+  ENABLE_MULTI_TENANT: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: ai-incident-response
+data:
+  nginx.conf: |
+    upstream frontend {
+        server frontend-service:3000;
+    }
+    
+    upstream backend {
+        server backend-service:3001;
+    }
+    
+    server {
+        listen 80;
+        server_name _;
+        
+        # Security headers
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains";
+        
+        # Frontend routes
+        location / {
+            proxy_pass http://frontend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        # API routes
+        location /api/ {
+            proxy_pass http://backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # API rate limiting
+            limit_req zone=api burst=20 nodelay;
+        }
+        
+        # Health check
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+    
+    # Rate limiting
+    http {
+        limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+    }

@@ -1,0 +1,10 @@
+---
+description: Lightweight testing & smoke tests for fast feedback
+---
+
+# TESTING
+
+- Create a `tests/` (Python: pytest) or `__tests__/` (TS: vitest/jest).
+- Add at least one **smoke test** that exercises the main Crew flow end-to-end with fakes/mocks.
+- For bug fixes, always add a regression test first.
+- Keep tests <2s locally when possible.

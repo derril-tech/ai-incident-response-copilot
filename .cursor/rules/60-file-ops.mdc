@@ -1,0 +1,27 @@
+---
+description: Force agent to create and update files autonomously
+alwaysApply: true
+---
+
+# FILE CREATION & EDITING RULES
+
+- When a task requires a new file, the agent MUST:
+  1. Create the file directly in the repo with sensible defaults.
+  2. Populate it with the requested or required boilerplate content.
+  
+
+- The agent MUST NOT ask the user to create or run files manually if it can create them itself.  
+  Example: If TODO.md specifies “Add docker-compose.dev.yml”, Cursor must write the file directly, not prompt the user to do so.
+
+- For missing directories, the agent MUST create the folder structure as needed.  
+  Example: If `/apps/orchestrator` does not exist, Cursor creates it before adding `main.py`.
+
+- For config/runtime files (`.env.example`, `.gitignore`, `docker-compose.dev.yml`, etc.), Cursor must generate a usable template. The user may refine later, but defaults must be valid.
+
+- For migrations/tests/docs, Cursor must also generate the initial files (not just stubs in chat).  
+
+# SAFETY
+
+- Cursor must announce in chat which files it created or updated and provide a summary.  
+- If uncertain about content, Cursor should still create a stub file with TODO comments instead of asking the user.  
+- User intervention is only required for secrets, credentials, or irreversible destructive actions (e.g. dropping databases).  

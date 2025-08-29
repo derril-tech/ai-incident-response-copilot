@@ -1,0 +1,15 @@
+---
+description: TypeScript/Node quality and build setup
+globs:
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "package.json"
+  - "tsconfig.json"
+---
+
+# TS/JS PRACTICES
+
+- Default to TypeScript; strict mode on.
+- Scripts: `dev`, `build`, `start`, `lint`, `test`.
+- Keep imports absolute via `paths` mapping; no deep relative spaghetti.
+- Small pure functions > massive utils; add JSDoc for public exports.

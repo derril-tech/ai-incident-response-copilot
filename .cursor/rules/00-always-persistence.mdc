@@ -1,0 +1,62 @@
+---
+description: Guardrails for uninterrupted, phase-to-phase execution with explicit loop + stop conditions
+alwaysApply: true
+---
+
+# SESSION CONTINUITY (ALWAYS-ON)
+
+Persistent state files in repo root (create if missing):
+- PLAN.md — Current plan + next 3 concrete tasks.
+- TODO.md — Checklist of granular tasks grouped by **Phase N**.
+- ARCH.md — Architecture overview.
+- RULES-INDEX.md — Pointers to these rules + project rules.
+
+
+On session start or file changes:
+1) Read PLAN.md, TODO.md, ARCH.md.
+2) Post a **Context Recap** in ≤2 lines: current phase → next task.
+3) If plan changed, update PLAN.md.
+
+# EDITING PRINCIPLES
+
+- Preserve existing logic/branches; no deletions of else-clauses without explicit instruction.
+- Minimize diff surface; focused edits.
+- For risky changes, show before/after snippets & why safe.
+
+# DEFAULTS (DON'T ASK)
+
+If info is missing:
+- Use stubs/mocks, env placeholders (`YOUR_API_KEY`) and note in BLOCKERS.md.
+- Follow established patterns in repo (prefer existing libs, styles, file structure).
+- If two reasonable paths exist, choose the one with **smaller diff + fewer deps** and log the decision.
+
+# CONTINUOUS EXECUTION LOOP
+
+**Goal:** Do not pause between phases unless a stop condition applies.
+
+Loop:
+1) Determine current `phase` and `task` from TODO.md.
+2) If current task is unchecked → execute edits/commits.
+3) After each task:
+   - Check off in TODO.md.
+   
+4) When all tasks in **Phase N** are done:
+   - Append a 1–4 line Phase Summary (what changed, files).
+   - **immediately** start Phase N+1.
+
+**Stop ONLY if**:
+- Credentials are required and cannot be stubbed.
+- Action is destructive (data loss, secrets exposure).
+- Requirements conflict and cannot be resolved from PLAN.md/ARCH.md.
+- You hit hard token/length limits mid-task (then finalize edits, summarize, and set `status: blocked`).
+
+# OUTPUT BUDGET (KEEP MOVING)
+
+- Chat messages ≤ ~10 lines; prefer file edits + checklists over prose.
+- For multi-file edits, prioritize applying patches; summarize in ≤5 bullet points.
+- Never end a phase by asking for approval; assume “continue”.
+
+# SELF-HEALING
+
+- If a command/file fails to apply, create a minimal repro (test or snippet), fix, and proceed.
+- If blocked, write to BLOCKERS.md with (a) blocker, (b) proposed default, (c) what you’ll do next using that default in 5 minutes if not resolved. Then proceed with the default.

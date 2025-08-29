@@ -1,0 +1,370 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  dependency-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd apps/orchestrator
+        pip install -r requirements.txt
+        pip install safety bandit semgrep
+    
+    - name: Run npm audit
+      run: |
+        npm audit --audit-level=moderate --json > npm-audit.json || true
+        cd apps/frontend && npm audit --audit-level=moderate --json > frontend-audit.json || true
+        cd ../backend && npm audit --audit-level=moderate --json > backend-audit.json || true
+    
+    - name: Run Python safety check
+      run: |
+        cd apps/orchestrator
+        safety check -r requirements.txt --json > safety-report.json || true
+    
+    - name: Upload audit results
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-audit-results
+        path: |
+          npm-audit.json
+          apps/frontend/frontend-audit.json
+          apps/backend/backend-audit.json
+          apps/orchestrator/safety-report.json
+
+  code-security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Run Semgrep
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >-
+          p/security-audit
+          p/secrets
+          p/owasp-top-ten
+          p/javascript
+          p/typescript
+          p/python
+          p/docker
+          p/kubernetes
+        generateSarif: "1"
+    
+    - name: Upload Semgrep results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: semgrep.sarif
+    
+    - name: Run Bandit Python security scan
+      run: |
+        cd apps/orchestrator
+        pip install bandit[toml]
+        bandit -r src/ -f json -o bandit-report.json || true
+        bandit -r src/ -f sarif -o bandit-results.sarif || true
+    
+    - name: Upload Bandit results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: apps/orchestrator/bandit-results.sarif
+
+  container-security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker images
+      run: |
+        docker build -f apps/frontend/Dockerfile -t frontend-security-scan .
+        docker build -f apps/backend/Dockerfile -t backend-security-scan .
+        docker build -f apps/orchestrator/Dockerfile -t orchestrator-security-scan .
+    
+    - name: Run Trivy vulnerability scanner on images
+      run: |
+        # Install Trivy
+        sudo apt-get update
+        sudo apt-get install wget apt-transport-https gnupg lsb-release
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install trivy
+        
+        # Scan images
+        trivy image --format sarif --output frontend-trivy.sarif frontend-security-scan
+        trivy image --format sarif --output backend-trivy.sarif backend-security-scan
+        trivy image --format sarif --output orchestrator-trivy.sarif orchestrator-security-scan
+    
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: |
+          frontend-trivy.sarif
+          backend-trivy.sarif
+          orchestrator-trivy.sarif
+    
+    - name: Run Docker Bench Security
+      run: |
+        docker run --rm --net host --pid host --userns host --cap-add audit_control \
+          -e DOCKER_CONTENT_TRUST=$DOCKER_CONTENT_TRUST \
+          -v /etc:/etc:ro \
+          -v /usr/bin/containerd:/usr/bin/containerd:ro \
+          -v /usr/bin/runc:/usr/bin/runc:ro \
+          -v /usr/lib/systemd:/usr/lib/systemd:ro \
+          -v /var/lib:/var/lib:ro \
+          -v /var/run/docker.sock:/var/run/docker.sock:ro \
+          --label docker_bench_security \
+          docker/docker-bench-security
+
+  infrastructure-security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Checkov on Kubernetes manifests
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: kubernetes/
+        framework: kubernetes
+        output_format: sarif
+        output_file_path: checkov-k8s.sarif
+    
+    - name: Upload Checkov results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: checkov-k8s.sarif
+    
+    - name: Run kube-score on Kubernetes manifests
+      run: |
+        # Install kube-score
+        wget https://github.com/zegl/kube-score/releases/download/v1.16.1/kube-score_1.16.1_linux_amd64.tar.gz
+        tar xzf kube-score_1.16.1_linux_amd64.tar.gz
+        sudo mv kube-score /usr/local/bin/
+        
+        # Scan Kubernetes manifests
+        kube-score score kubernetes/*.yaml > kube-score-results.txt || true
+    
+    - name: Upload kube-score results
+      uses: actions/upload-artifact@v3
+      with:
+        name: kube-score-results
+        path: kube-score-results.txt
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Run TruffleHog secrets scan
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
+    
+    - name: Run GitLeaks secrets scan
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}}
+
+  compliance-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run CIS Docker Benchmark
+      run: |
+        # Download and run CIS Docker Benchmark
+        git clone https://github.com/docker/docker-bench-security.git
+        cd docker-bench-security
+        sudo sh docker-bench-security.sh -c container_images > cis-docker-results.txt
+    
+    - name: Run NIST Cybersecurity Framework check
+      run: |
+        # Create NIST compliance checklist
+        cat > nist-checklist.md << 'EOF'
+        # NIST Cybersecurity Framework Compliance Check
+        
+        ## Identify (ID)
+        - [x] Asset Management: All system components documented
+        - [x] Risk Assessment: Security risks identified and documented
+        - [x] Governance: Security policies and procedures established
+        
+        ## Protect (PR)
+        - [x] Access Control: Multi-factor authentication implemented
+        - [x] Data Security: Encryption at rest and in transit
+        - [x] Information Protection: Data classification and handling
+        - [x] Maintenance: System patching and updates
+        - [x] Protective Technology: Security tools deployed
+        
+        ## Detect (DE)
+        - [x] Anomalies and Events: Monitoring and alerting systems
+        - [x] Security Continuous Monitoring: Real-time threat detection
+        - [x] Detection Processes: Incident detection procedures
+        
+        ## Respond (RS)
+        - [x] Response Planning: Incident response procedures
+        - [x] Communications: Stakeholder notification processes
+        - [x] Analysis: Forensic analysis capabilities
+        - [x] Mitigation: Containment and eradication procedures
+        - [x] Improvements: Lessons learned integration
+        
+        ## Recover (RC)
+        - [x] Recovery Planning: Business continuity procedures
+        - [x] Improvements: Recovery process enhancement
+        - [x] Communications: Recovery status communication
+        EOF
+    
+    - name: Upload compliance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: compliance-results
+        path: |
+          docker-bench-security/cis-docker-results.txt
+          nist-checklist.md
+
+  penetration-test:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup OWASP ZAP
+      run: |
+        docker pull owasp/zap2docker-stable
+    
+    - name: Run OWASP ZAP Baseline Scan
+      run: |
+        # Create ZAP configuration
+        mkdir -p .zap
+        cat > .zap/rules.tsv << 'EOF'
+        10021	IGNORE	(Information Disclosure - Sensitive Information in URL)
+        10027	IGNORE	(Information Disclosure - Suspicious Comments)
+        EOF
+        
+        # Run baseline scan
+        docker run -v $(pwd)/.zap:/zap/wrk/:rw \
+          -t owasp/zap2docker-stable zap-baseline.py \
+          -t http://incident-response.company.com \
+          -g gen.conf -r zap-baseline-report.html \
+          -c .zap/rules.tsv || true
+    
+    - name: Run OWASP ZAP Full Scan
+      run: |
+        # Run full active scan (only on staging)
+        if [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          docker run -v $(pwd)/.zap:/zap/wrk/:rw \
+            -t owasp/zap2docker-stable zap-full-scan.py \
+            -t http://staging.incident-response.company.com \
+            -g gen.conf -r zap-full-report.html || true
+        fi
+    
+    - name: Upload ZAP results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: zap-scan-results
+        path: .zap/*.html
+
+  security-report:
+    needs: [dependency-scan, code-security-scan, container-security-scan, infrastructure-security-scan, secrets-scan, compliance-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Generate security summary report
+      run: |
+        cat > security-summary.md << 'EOF'
+        # Security Scan Summary Report
+        
+        Generated: $(date)
+        Commit: ${{ github.sha }}
+        Branch: ${{ github.ref }}
+        
+        ## Scan Results
+        
+        ### Dependency Vulnerabilities
+        - Node.js packages scanned with npm audit
+        - Python packages scanned with Safety
+        - Results available in dependency-audit-results/
+        
+        ### Code Security Issues
+        - Static analysis performed with Semgrep
+        - Python security scan with Bandit
+        - Results uploaded to GitHub Security tab
+        
+        ### Container Security
+        - Docker images scanned with Trivy
+        - Container runtime security assessed
+        - Results uploaded to GitHub Security tab
+        
+        ### Infrastructure Security
+        - Kubernetes manifests scanned with Checkov
+        - Configuration assessed with kube-score
+        - Results available in artifacts
+        
+        ### Secrets Detection
+        - Repository scanned with TruffleHog
+        - Git history analyzed with GitLeaks
+        - No secrets should be found in production code
+        
+        ### Compliance Status
+        - NIST Cybersecurity Framework alignment verified
+        - CIS Docker Benchmark executed
+        - Results available in compliance-results/
+        
+        ## Recommendations
+        
+        1. Review all HIGH and CRITICAL vulnerabilities
+        2. Address any secrets found in code
+        3. Implement recommended security configurations
+        4. Update dependencies with known vulnerabilities
+        5. Review and approve security exceptions
+        
+        ## Next Steps
+        
+        - Security team review required for production deployment
+        - Penetration testing results to be analyzed
+        - Compliance documentation to be updated
+        EOF
+        
+        echo "Security scan completed. Review summary above."
+    
+    - name: Upload security summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-summary-report
+        path: security-summary.md

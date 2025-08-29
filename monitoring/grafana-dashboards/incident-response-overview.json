@@ -1,0 +1,219 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "AI Incident Response Copilot - Overview",
+    "tags": ["incident-response", "security", "ai"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Incidents",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(incidents_active_total)",
+            "legendFormat": "Active Incidents"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 5},
+                {"color": "red", "value": 10}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Incident Creation Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(incidents_created_total[5m])",
+            "legendFormat": "Incidents/min"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 18, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Processing Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(processing_duration_seconds_bucket[5m]))",
+            "legendFormat": "50th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(processing_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(processing_duration_seconds_bucket[5m]))",
+            "legendFormat": "99th percentile"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "System Health",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "up{job=~\"frontend|backend|orchestrator\"}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "__name__": true,
+                "Time": true
+              },
+              "renameByName": {
+                "job": "Service",
+                "Value": "Status"
+              }
+            }
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Artifacts Collected",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(artifacts_collected_total)",
+            "legendFormat": "Total Artifacts"
+          }
+        ],
+        "gridPos": {"h": 6, "w": 6, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "IOCs Detected",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(iocs_detected_total)",
+            "legendFormat": "Total IOCs"
+          }
+        ],
+        "gridPos": {"h": 6, "w": 6, "x": 6, "y": 16}
+      },
+      {
+        "id": 7,
+        "title": "Reports Generated",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(reports_generated_total)",
+            "legendFormat": "Total Reports"
+          }
+        ],
+        "gridPos": {"h": 6, "w": 6, "x": 12, "y": 16}
+      },
+      {
+        "id": 8,
+        "title": "Average Quality Score",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "avg(report_quality_score)",
+            "legendFormat": "Quality Score"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 10,
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 6, "w": 6, "x": 18, "y": 16}
+      },
+      {
+        "id": 9,
+        "title": "Error Rate by Service",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m])",
+            "legendFormat": "{{job}} Error Rate"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Error Rate",
+            "min": 0,
+            "max": 1
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 22}
+      },
+      {
+        "id": 10,
+        "title": "Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "container_memory_usage_bytes{container!=\"POD\",container!=\"\"} / 1024 / 1024",
+            "legendFormat": "{{container}} Memory (MB)"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Memory (MB)",
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 30}
+      },
+      {
+        "id": 11,
+        "title": "CPU Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(container_cpu_usage_seconds_total{container!=\"POD\",container!=\"\"}[5m]) * 100",
+            "legendFormat": "{{container}} CPU %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "CPU %",
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 30}
+      }
+    ]
+  }
+}

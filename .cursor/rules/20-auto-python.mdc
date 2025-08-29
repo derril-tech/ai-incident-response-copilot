@@ -1,0 +1,15 @@
+---
+description: Python quality, packaging, and runtime practices
+globs:
+  - "**/*.py"
+  - "pyproject.toml"
+  - "requirements.txt"
+---
+
+# PYTHON PRACTICES
+
+- Prefer `pyproject.toml` over requirements when possible; pin minimal, necessary versions.
+- Use `ruff` + `black`; add pre-commit hooks when a repo has `.pre-commit-config.yaml`.
+- Include docstrings for public functions; add type hints for function signatures.
+- Avoid global state; prefer dependency injection for clients (LLM, DB, HTTP).
+- Write a fast smoke test for core paths (see testing rule).

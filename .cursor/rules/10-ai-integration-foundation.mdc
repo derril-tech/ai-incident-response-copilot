@@ -1,0 +1,249 @@
+10-ai-integration-foundation.mdc
+
+Purpose: Standardize how Cursor scaffolds and evolves intelligence, automation, and integration layers across SaaS apps—only when needed for a given project. This covers things like: promptable services, rule engines, background workers, external API tools, and “orchestration” (workflows, jobs, queues). If a project doesn’t need these, skip the relevant parts—but keep the contracts, testing, and observability norms.
+
+Golden Rule: Any change to the intelligence/automation/integration surface must also update:
+
+/PLAN.md (next 3 tasks)
+
+/TODO.md (actionable boxes)
+
+/ARCH.md (diagram/text delta)
+
+
+this rule file if the rule itself changes
+
+1) Applicability Modes (pick per project)
+
+Mode A — No Orchestration / No AI: Use only typed APIs, background jobs (if any), and integration tools with tests + telemetry.
+
+Mode B — Lightweight Automation: A few jobs/queues, webhooks, or 3rd-party API calls; optional promptable helpers.
+
+Mode C — Full Orchestration / AI: Multiple services/queues, workflow state machines, prompt/policy layers, tool adapters.
+
+The selected mode must be stated in /PLAN.md → Current Goal and /ARCH.md → High-Level Topology.
+
+
+2) Contracts First (regardless of mode)
+
+Define boundary schemas with typed models (e.g., TypeScript Zod, Pydantic, or equivalent).
+
+External surface must be OpenAPI (HTTP) or gRPC/protobuf. Generated clients for FE/workers where practical.
+
+No untyped any/dict crossing module boundaries.
+
+Must-haves per boundary:
+
+Request/response models with validation & example payloads.
+
+Error model (Problem+JSON or equivalent) with stable codes.
+
+Idempotency for mutating endpoints (header or key).
+
+3) Integration Tools (HTTP/SDK/Webhook)
+
+
+All third-party calls go through tool adapters (small, typed modules): retries, timeouts, rate-limit handling, auth, and idempotency.
+
+Adapters must not leak raw secrets; use env/secrets manager references.
+
+Provide offline mocks for tests; prefer “contract tests” against recorded fixtures.
+
+Minimum adapter policy
+
+Timeout defaults (e.g., 20s) and exponential backoff with jitter on 429/5xx.
+
+Structured errors with provider, endpoint, status, retryable.
+
+Observability: span + tags (provider, op, latency_ms, retries).
+
+
+4) Orchestration & Background Work (if used)
+
+Represent jobs/workflows with explicit states (e.g., queued → running → waiting → succeeded/failed/cancelled).
+
+Persist idempotency keys per job step; store retry count and last error.
+
+Support dead-letter queues (DLQ) with minimal requeue tooling.
+
+Concurrency/rate limits configurable per tenant/workflow.
+
+
+5) “Intelligence” Layers (optional, AI or rule engines)
+
+Keep system prompts/policies (or rule configs) in versioned files, separate from code.
+
+Enforce schema-conformant outputs (parse & validate).
+
+Default to deterministic runs (low temperature / strict rules). Allow deviations only with an entry in DECISIONS.log.
+
+Capture assumptions/uncertainty fields in outputs.
+
+
+6) Observability & Metrics (always)
+
+Wrap boundaries (API handlers, jobs, tool calls) with tracing (OpenTelemetry or equivalent).
+
+Emit structured logs (json/structured) including: tenant, route/task, span_id, latency_ms, status, retries.
+
+Track counters/timers:
+
+requests_total, errors_total{code=}, latency_ms{p95,p99}
+
+If AI used: tokens_in/out, cost_usd (budget tags)
+
+
+7) Error Handling & Resilience
+
+Retry only on transient classes (timeouts, 429/5xx).
+
+Never retry validation/authorization errors.
+
+Uniform error surface (Problem+JSON fields: type, title, detail, status, instance, code).
+
+On repeated failure → DLQ with diagnostic context (no secrets).
+
+
+8) Secrets & Configuration
+
+No secrets in code, tests, fixtures, or logs.
+
+Use env vars or secrets manager references.
+
+Provide .env.example with comments and no values for secrets.
+
+
+Template (extend per project)
+
+
+# API / Auth
+APP_BASE_URL=
+JWT_SECRET=            # required (secret)
+ENCRYPTION_KEY=        # required (secret)
+
+# External Providers
+PROVIDER_X_BASE_URL=
+PROVIDER_X_API_KEY=    # required (secret)
+
+# Observability
+OTEL_EXPORTER_OTLP_ENDPOINT=
+SENTRY_DSN=
+
+
+9) Testing Strategy (graduated by mode)
+
+Unit tests: schema validation, pure logic, adapters with mocked I/O.
+
+Contract tests: against recorded fixtures or sandboxes (providers).
+
+Integration/E2E (where relevant): happy paths + failure injections (429, 5xx, timeouts, malformed payloads).
+
+Snapshot/golden outputs only when deterministic; update requires note in DECISIONS.log.
+
+CI must run: lint, typecheck, tests, build. Fail on contract drift.
+
+
+10) Performance & Budgets (if AI/long jobs used)
+
+Set latency budgets per route/job in /ARCH.md.
+
+If AI is used, track cost with a tiny estimator and assert ceilings (e.g., per request budget).
+
+Add load test notes (targets, datasets) in /TODO.md when performance becomes a goal.
+
+
+11) Multi-Tenant & Safety
+
+Identify tenant in every log/trace/event; enforce RLS or equivalent checks before data access.
+
+Webhook verification (HMAC/timestamp); replay protection.
+
+PII handling: redaction helpers; do not log payloads unless masked.
+
+
+12) DevEx Rules (what Cursor should auto-generate)
+
+When you ask Cursor to add/modify integration/automation/AI code, it should also:
+
+Update/introduce boundary schemas and OpenAPI (or protobuf) and re-generate clients.
+
+Add/extend tool adapters with retries/telemetry.
+
+Add tests (unit + contract) and fixtures/mocks.
+
+Wire traces/logs/metrics.
+
+
+Update /PLAN.md, /TODO.md, /ARCH.md.
+
+Keep imports sorted, types strict, docstrings/comments present.
+
+Conventional commits
+
+feat(api): ...
+
+feat(adapter): ...
+
+feat(job): ...
+
+feat(ai): ... (only if used)
+
+fix(error): ...
+
+chore(ci): ...
+
+docs(arch): ...
+
+test(contract): ...
+
+
+13) Minimal Scaffolding Recipes (language-agnostic)
+
+Add a new external integration (“Provider X”):
+
+Create adapters/provider-x/* with typed client, retries, timeouts.
+
+Add env keys to .env.example with comments.
+
+Add unit & contract tests with fixtures.
+
+Document endpoints & quotas in /ARCH.md → External Integrations.
+
+Add a background job:
+
+Define job input/output schema.
+
+Implement handler with idempotency & retries.
+
+Add DLQ pathway + requeue script.
+
+Add tests (happy path + transient failure).
+
+Add an intelligence helper (optional):
+
+Versioned prompt/policy file(s) or rule config.
+
+Enforce output schema; capture uncertain + assumptions.
+
+Add deterministic test (mocked provider).
+
+
+14) Backwards Compatibility & Versioning
+
+Breaking schema/API change ⇒ version bump, migration notes in /DECISIONS.log, and upgrade path in /TODO.md.
+
+Keep legacy adapters/versions during grace windows when feasible.
+
+15) Merge Checklist (must pass)
+
+ Schemas & API updated (and clients regenerated if applicable)
+
+ Tests (unit/contract/integration) pass locally & in CI
+
+ Tracing + structured logs on new/changed paths
+
+ Env vars documented; no secrets leaked
+
+ /PLAN.md, /TODO.md, /DECISIONS.log, /ARCH.md updated
+
+End of 10-ai-integration-foundation.mdc

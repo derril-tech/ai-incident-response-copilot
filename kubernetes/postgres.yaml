@@ -1,0 +1,202 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: ai-incident-response
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ai-incident-response-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: ai-incident-response-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ai-incident-response-secrets
+              key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - $(POSTGRES_USER)
+            - -d
+            - $(POSTGRES_DB)
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - $(POSTGRES_USER)
+            - -d
+            - $(POSTGRES_DB)
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: ai-incident-response
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: ai-incident-response
+data:
+  01-init.sql: |
+    -- Create pgvector extension
+    CREATE EXTENSION IF NOT EXISTS vector;
+    
+    -- Create incident response schema
+    CREATE SCHEMA IF NOT EXISTS incident_response;
+    
+    -- Set default search path
+    ALTER DATABASE incident_response SET search_path TO incident_response, public;
+    
+    -- Create tables
+    CREATE TABLE IF NOT EXISTS incidents (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        severity VARCHAR(50) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_by VARCHAR(255),
+        assigned_to VARCHAR(255),
+        tenant_id VARCHAR(255) NOT NULL,
+        metadata JSONB DEFAULT '{}'
+    );
+    
+    CREATE TABLE IF NOT EXISTS artifacts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        incident_id UUID REFERENCES incidents(id),
+        name VARCHAR(255) NOT NULL,
+        type VARCHAR(100) NOT NULL,
+        storage_path VARCHAR(500) NOT NULL,
+        hash_sha256 VARCHAR(64) NOT NULL,
+        hash_md5 VARCHAR(32) NOT NULL,
+        size_bytes BIGINT,
+        collected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        collected_by VARCHAR(255),
+        legal_hold BOOLEAN DEFAULT FALSE,
+        tenant_id VARCHAR(255) NOT NULL,
+        metadata JSONB DEFAULT '{}'
+    );
+    
+    CREATE TABLE IF NOT EXISTS timelines (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        incident_id UUID REFERENCES incidents(id),
+        events JSONB NOT NULL,
+        phases JSONB DEFAULT '[]',
+        anomalies JSONB DEFAULT '[]',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        tenant_id VARCHAR(255) NOT NULL,
+        metadata JSONB DEFAULT '{}'
+    );
+    
+    CREATE TABLE IF NOT EXISTS reports (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        incident_id UUID REFERENCES incidents(id),
+        title VARCHAR(255) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        content JSONB NOT NULL,
+        quality_score DECIMAL(3,1),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        created_by VARCHAR(255),
+        tenant_id VARCHAR(255) NOT NULL,
+        metadata JSONB DEFAULT '{}'
+    );
+    
+    -- Create indexes
+    CREATE INDEX IF NOT EXISTS idx_incidents_tenant_id ON incidents(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+    CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
+    CREATE INDEX IF NOT EXISTS idx_artifacts_incident_id ON artifacts(incident_id);
+    CREATE INDEX IF NOT EXISTS idx_artifacts_tenant_id ON artifacts(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_artifacts_hash_sha256 ON artifacts(hash_sha256);
+    CREATE INDEX IF NOT EXISTS idx_timelines_incident_id ON timelines(incident_id);
+    CREATE INDEX IF NOT EXISTS idx_reports_incident_id ON reports(incident_id);
+    CREATE INDEX IF NOT EXISTS idx_reports_tenant_id ON reports(tenant_id);
+    
+    -- Row Level Security
+    ALTER TABLE incidents ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE artifacts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE timelines ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
+    
+    -- Create RLS policies (basic tenant isolation)
+    CREATE POLICY tenant_isolation_incidents ON incidents
+        FOR ALL TO PUBLIC
+        USING (tenant_id = current_setting('app.current_tenant', true));
+    
+    CREATE POLICY tenant_isolation_artifacts ON artifacts
+        FOR ALL TO PUBLIC
+        USING (tenant_id = current_setting('app.current_tenant', true));
+    
+    CREATE POLICY tenant_isolation_timelines ON timelines
+        FOR ALL TO PUBLIC
+        USING (tenant_id = current_setting('app.current_tenant', true));
+    
+    CREATE POLICY tenant_isolation_reports ON reports
+        FOR ALL TO PUBLIC
+        USING (tenant_id = current_setting('app.current_tenant', true));
